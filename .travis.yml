@@ -6,4 +6,4 @@ deploy:
   - provider: script
     script: git clone https://github.com/fogger/go-builders.git && ./go-builders/build.sh
     on:
-tags: true
+      tags: true
