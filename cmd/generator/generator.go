@@ -8,19 +8,18 @@ import (
 	"math"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
 
 const Period = 1 * time.Second
-const MaxValue = 30
-const Step = math.Pi / 24
 
 var mu sync.Mutex
 var subs = list.New()
 
 func main() {
-	port := os.Getenv("GENERATOR_PORT")
+	port := os.Getenv("GEN_PORT")
 	if port == "" {
 		port = "3000"
 	}
@@ -28,9 +27,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Listen on %s", ln.Addr())
 	defer ln.Close()
-	go ticker()
+	log.Printf("Listen on %s", ln.Addr())
+
+	var g Generator
+	switch os.Getenv("GEN_WAVEFORM") {
+	case "square":
+		g = &ArrayGenerator{factors: square}
+	case "triangle":
+		g = &ArrayGenerator{factors: triangle}
+	case "sawtooth":
+		g = &ArrayGenerator{factors: sawtooth}
+	default:
+		g = &SineGenerator{step: math.Pi / 8}
+	}
+	go ticker(g, amplitude())
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -39,6 +51,18 @@ func main() {
 		log.Printf("Connection from %s", conn.RemoteAddr())
 		addSubscriber(conn)
 	}
+}
+
+func amplitude() float64 {
+	vf, err := strconv.ParseFloat(os.Getenv("GEN_AMPLITUDE"), 32)
+	if err == nil {
+		return vf
+	}
+	vi, err := strconv.ParseInt(os.Getenv("GEN_AMPLITUDE"), 10, 32)
+	if err == nil {
+		return float64(vi)
+	}
+	return 100.0
 }
 
 func addSubscriber(conn net.Conn) {
@@ -62,22 +86,19 @@ func updateSubscribers(sample *Sample) {
 	}
 }
 
-func ticker() {
+func ticker(g Generator, amp float64) {
 	ticker := time.NewTicker(Period)
 	defer ticker.Stop()
-
-	x := 0.0
 	for {
 		select {
 		case t := <-ticker.C:
-			v := MaxValue * math.Sin(x)
+			v := g.Next() * amp
 			log.Printf("Emitting value: %f", v)
 			s := &Sample{
 				Timestamp: t.Unix(),
 				Value:     v,
 			}
 			updateSubscribers(s)
-			x = x + Step
 		}
 	}
 }
@@ -113,4 +134,90 @@ func (s *Subscriber) Send(sample *Sample) error {
 
 func (s *Subscriber) Close() {
 	s.conn.Close()
+}
+
+type Generator interface {
+	Next() float64
+}
+
+type ArrayGenerator struct {
+	factors []float64
+	index   int
+}
+
+func (g *ArrayGenerator) Next() float64 {
+	f := g.factors[g.index]
+	g.index++
+	if g.index == len(g.factors) {
+		g.index = 0
+	}
+	return f
+}
+
+type SineGenerator struct {
+	step float64
+	x    float64
+}
+
+func (g *SineGenerator) Next() float64 {
+	f := math.Sin(g.x)
+	g.x += g.step
+	return f
+}
+
+var square = []float64{
+	1.000000,
+	1.000000,
+	1.000000,
+	1.000000,
+	1.000000,
+	1.000000,
+	1.000000,
+	1.000000,
+	-1.000000,
+	-1.000000,
+	-1.000000,
+	-1.000000,
+	-1.000000,
+	-1.000000,
+	-1.000000,
+	-1.000000,
+}
+
+var triangle = []float64{
+	-1.000000,
+	-0.750000,
+	-0.500000,
+	-0.250000,
+	0.000000,
+	0.250000,
+	0.500000,
+	0.750000,
+	1.000000,
+	0.750000,
+	0.500000,
+	0.250000,
+	0.000000,
+	-0.250000,
+	-0.500000,
+	-0.750000,
+}
+
+var sawtooth = []float64{
+	-1.000000,
+	-0.875000,
+	-0.750000,
+	-0.625000,
+	-0.500000,
+	-0.375000,
+	-0.250000,
+	-0.125000,
+	0.000000,
+	0.125000,
+	0.250000,
+	0.375000,
+	0.500000,
+	0.625000,
+	0.750000,
+	0.875000,
 }
