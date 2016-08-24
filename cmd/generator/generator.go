@@ -19,19 +19,14 @@ var mu sync.Mutex
 var subs = list.New()
 
 func main() {
-	port := os.Getenv("GEN_PORT")
-	if port == "" {
-		port = "3000"
-	}
-	ln, err := net.Listen("tcp", net.JoinHostPort("", port))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer ln.Close()
-	log.Printf("Listen on %s", ln.Addr())
+	log.SetOutput(os.Stdout)
 
+	amp := amplitude()
+	log.Printf("Amplitude: %f", amp)
+
+	waveform := os.Getenv("GEN_WAVEFORM")
 	var g Generator
-	switch os.Getenv("GEN_WAVEFORM") {
+	switch waveform {
 	case "square":
 		g = &ArrayGenerator{factors: square}
 	case "triangle":
@@ -39,10 +34,18 @@ func main() {
 	case "sawtooth":
 		g = &ArrayGenerator{factors: sawtooth}
 	default:
+		waveform = "sine"
 		g = &SineGenerator{step: math.Pi / 8}
 	}
-	go ticker(g, amplitude())
+	log.Printf("Waveform: %s", waveform)
+	go emit(g, amp)
 
+	ln, err := net.Listen("tcp", net.JoinHostPort("", port()))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer ln.Close()
+	log.Printf("Listen on %s", ln.Addr())
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -51,6 +54,19 @@ func main() {
 		log.Printf("Connection from %s", conn.RemoteAddr())
 		addSubscriber(conn)
 	}
+}
+
+func port() string {
+	port := os.Getenv("GEN_PORT")
+	if port != "" {
+		return port
+	}
+	// TODO: remove backwards compatibility
+	port = os.Getenv("GENERATOR_PORT")
+	if port != "" {
+		return port
+	}
+	return "3000"
 }
 
 func amplitude() float64 {
@@ -86,7 +102,7 @@ func updateSubscribers(sample *Sample) {
 	}
 }
 
-func ticker(g Generator, amp float64) {
+func emit(g Generator, amp float64) {
 	ticker := time.NewTicker(Period)
 	defer ticker.Stop()
 	for {
